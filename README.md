@@ -56,3 +56,7 @@ utile solo per provare. All'avvio il terminale indica quale archivio sta usando.
 - `store.py` — accesso ai dati (Firestore, oppure memoria per le prove)
 - `i18n.py` — tutte le traduzioni (una riga per lingua per ogni testo)
 - `templates/` — pagine ed email; `static/` — stile e logo
+
+## Messa online
+
+Vedi [DEPLOY.md](DEPLOY.md): Cloud Run + Firebase Hosting su https://ixgoo.web.app.

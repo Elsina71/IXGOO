@@ -18,6 +18,7 @@ from pathlib import Path
 import segno
 from flask import (Flask, Response, abort, flash, g, redirect, render_template,
                    request, session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash as _gen_hash
 
 from i18n import DEFAULT_LANG, LANGS, RTL, translate
@@ -51,11 +52,17 @@ OUTBOX = DATA_DIR / "outbox"
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "IxGoo Courier <noreply@ixgoo.gr>")
 BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
+# Cloud Run imposta K_SERVICE: lì l'app è in produzione
+PRODUCTION = bool(os.environ.get("K_SERVICE")) or os.environ.get("PRODUCTION") == "1"
+# casella email di prova (/dev/posta): solo in locale e senza SMTP
+DEV_MAIL = not SMTP_HOST and not PRODUCTION
 
 
 def secret_key():
     if os.environ.get("SECRET_KEY"):
         return os.environ["SECRET_KEY"]
+    if PRODUCTION:
+        raise RuntimeError("SECRET_KEY mancante: impostala tra le variabili del servizio")
     key_file = DATA_DIR / "secret_key"
     if not key_file.exists():
         key_file.write_text(secrets.token_hex(32))
@@ -64,7 +71,12 @@ def secret_key():
 
 app = Flask(__name__)
 app.config.update(SECRET_KEY=secret_key(), SESSION_COOKIE_HTTPONLY=True,
-                  SESSION_COOKIE_SAMESITE="Lax")
+                  SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=PRODUCTION,
+                  # Firebase Hosting inoltra a Cloud Run solo il cookie "__session"
+                  SESSION_COOKIE_NAME="__session")
+if PRODUCTION:
+    # dietro il proxy HTTPS di Cloud Run: link assoluti con https e host corretti
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 STATUS = ["in_attesa", "confermata", "consegnata", "annullata"]
 ROLES = ["cliente", "admin", "corriere"]
@@ -185,6 +197,10 @@ def send_mail(to, lang, subject_key, template, attachments=None, **ctx):
             app.logger.error("Invio email a %s fallito: %s", to, exc)
         return
 
+    if not DEV_MAIL:
+        app.logger.error("SMTP non configurato: email a %s non inviata (%s)", to, subject)
+        return
+
     # Modalità sviluppo: niente SMTP, l'email finisce nella cartella data/outbox
     OUTBOX.mkdir(exist_ok=True)
     name = f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.eml"
@@ -227,7 +243,7 @@ def before():
 def inject():
     lang = current_lang()
     return {"csrf_token": csrf_token, "STATUS": STATUS, "ROLES": ROLES, "LANGS": LANGS,
-            "lang": lang, "rtl": lang in RTL, "t": t, "dev_mail": not SMTP_HOST}
+            "lang": lang, "rtl": lang in RTL, "t": t, "dev_mail": DEV_MAIL}
 
 
 @app.template_filter("it_date")
@@ -751,7 +767,7 @@ def courier_dashboard():
 
 @app.route("/dev/posta")
 def dev_mailbox():
-    if SMTP_HOST:
+    if not DEV_MAIL:
         abort(404)
     mails = []
     if OUTBOX.exists():
@@ -763,7 +779,7 @@ def dev_mailbox():
 
 @app.route("/dev/posta/<mail_id>")
 def dev_mail(mail_id):
-    if SMTP_HOST or not re.match(r"^[\w-]+$", mail_id):
+    if not DEV_MAIL or not re.match(r"^[\w-]+$", mail_id):
         abort(404)
     path = OUTBOX / f"{mail_id}.eml"
     if not path.exists():

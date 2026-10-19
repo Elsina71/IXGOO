@@ -1,0 +1,9 @@
+.git
+.venv
+.claude
+data
+.env
+firebase-key.json
+*-firebase-adminsdk-*.json
+public
+__pycache__

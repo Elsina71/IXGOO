@@ -109,7 +109,9 @@ class Store:
 
 def open_store(base_dir):
     key = os.environ.get("FIREBASE_CREDENTIALS") or os.path.join(base_dir, "firebase-key.json")
-    if os.path.exists(key) or os.environ.get("FIRESTORE_USE_ADC") == "1":
+    # su Cloud Run (K_SERVICE) si usano le credenziali del servizio, senza file chiave
+    use_adc = os.environ.get("FIRESTORE_USE_ADC") == "1" or bool(os.environ.get("K_SERVICE"))
+    if os.path.exists(key) or use_adc:
         warnings.filterwarnings("ignore", category=FutureWarning, module=r"google\..*")
         from google.cloud import firestore
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")

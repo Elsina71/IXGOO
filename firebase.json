@@ -1,0 +1,10 @@
+{
+  "hosting": {
+    "site": "ixgoo",
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*"],
+    "rewrites": [
+      { "source": "**", "run": { "serviceId": "ixgoo", "region": "europe-west1" } }
+    ]
+  }
+}

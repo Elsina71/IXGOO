@@ -16,3 +16,6 @@ data/
 # chiave del service account Firebase: MAI su GitHub
 firebase-key.json
 *-firebase-adminsdk-*.json
+
+# valori privati per la messa online
+deploy-secrets.txt
