@@ -29,6 +29,20 @@ Dall'area **Utenti** l'admin crea altri corrieri o amministratori.
 
 Ogni utente riceve le email nella lingua che ha scelto.
 
+## Database: Firestore (progetto Firebase `ixgoo-9f901`)
+
+L'app salva clienti, utenti e spedizioni su Firestore:
+
+- `users` — un documento per account (clienti, admin, corrieri)
+- `shipments` — un documento per spedizione; l'ID è il codice `IXG-…`
+
+Per collegarla serve la chiave del service account: Console Firebase → ⚙ Impostazioni
+progetto → Account di servizio → **Genera nuova chiave privata**. Salva il file scaricato in
+questa cartella con il nome `firebase-key.json` (è escluso da Git: non caricarlo mai su GitHub).
+
+Senza chiave l'app parte lo stesso ma tiene i dati **solo in memoria** (si perdono al riavvio):
+utile solo per provare. All'avvio il terminale indica quale archivio sta usando.
+
 ## Configurazione (file `.env`, vedi `.env.example`)
 
 - `BASE_URL` — indirizzo pubblico dell'app. **Necessario in produzione**: è l'URL dentro il QR
@@ -38,6 +52,7 @@ Ogni utente riceve le email nella lingua che ha scelto.
 
 ## File
 
-- `app.py` — tutta la logica (rotte, database SQLite in `data/ixgoo.db`, email, QR)
+- `app.py` — tutta la logica (rotte, email, QR)
+- `store.py` — accesso ai dati (Firestore, oppure memoria per le prove)
 - `i18n.py` — tutte le traduzioni (una riga per lingua per ogni testo)
 - `templates/` — pagine ed email; `static/` — stile e logo

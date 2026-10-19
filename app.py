@@ -1,14 +1,13 @@
 """IxGoo Courier & Logistics - prenotazione spedizioni.
 
 Ruoli: cliente, admin, corriere. Lingue: vedi i18n.py (greco predefinito).
-Avvio: ./run.sh  (oppure .venv/bin/python app.py)
+Dati: Firestore (vedi store.py). Avvio: ./run.sh
 """
 import io
 import os
 import re
 import secrets
 import smtplib
-import sqlite3
 from datetime import datetime, date
 from email import policy
 from email.message import EmailMessage
@@ -22,6 +21,7 @@ from flask import (Flask, Response, abort, flash, g, redirect, render_template,
 from werkzeug.security import check_password_hash, generate_password_hash as _gen_hash
 
 from i18n import DEFAULT_LANG, LANGS, RTL, translate
+from store import open_store
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -48,7 +48,6 @@ load_env()
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 OUTBOX = DATA_DIR / "outbox"
-DB_PATH = os.environ.get("DATABASE", str(DATA_DIR / "ixgoo.db"))
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "IxGoo Courier <noreply@ixgoo.gr>")
 BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
@@ -74,81 +73,11 @@ PHONE_RE = re.compile(r"^\+?[0-9 ./()-]{6,20}$")
 ZIP_RE = re.compile(r"^[A-Za-z0-9 -]{3,10}$")
 
 
-# ---------------------------------------------------------------- database
+# ---------------------------------------------------------------- dati
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL DEFAULT 'cliente',
-    ragione_sociale TEXT,
-    nome TEXT NOT NULL,
-    cognome TEXT NOT NULL,
-    indirizzo TEXT,
-    cap TEXT,
-    citta TEXT,
-    provincia TEXT,
-    telefono TEXT,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    email_confirmed INTEGER NOT NULL DEFAULT 0,
-    confirm_token TEXT,
-    lang TEXT NOT NULL DEFAULT 'el',
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS shipments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL UNIQUE,
-    qr_token TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    status TEXT NOT NULL DEFAULT 'in_attesa',
-    mitt_ragione_sociale TEXT,
-    mitt_nome TEXT NOT NULL,
-    mitt_cognome TEXT NOT NULL,
-    mitt_telefono TEXT NOT NULL,
-    mitt_email TEXT NOT NULL,
-    pickup_date TEXT NOT NULL,
-    pickup_time TEXT NOT NULL,
-    pickup_indirizzo TEXT NOT NULL,
-    pickup_cap TEXT NOT NULL,
-    pickup_citta TEXT NOT NULL,
-    pickup_provincia TEXT,
-    dest_nome TEXT NOT NULL,
-    dest_indirizzo TEXT NOT NULL,
-    dest_cap TEXT NOT NULL,
-    dest_citta TEXT NOT NULL,
-    dest_provincia TEXT,
-    dest_ref_nome TEXT NOT NULL,
-    dest_ref_telefono TEXT NOT NULL,
-    tipo TEXT NOT NULL,
-    colli INTEGER NOT NULL DEFAULT 1,
-    peso TEXT,
-    note TEXT,
-    created_at TEXT NOT NULL,
-    confirmed_at TEXT,
-    confirmed_by INTEGER REFERENCES users(id),
-    delivered_at TEXT,
-    delivered_by INTEGER REFERENCES users(id),
-    cancelled_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_shipments_user ON shipments(user_id);
-CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
-"""
-
-
-def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
-
-
-@app.teardown_appcontext
-def close_db(_exc):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+store = open_store(str(BASE_DIR))
+users = store.users
+shipments = store.shipments
 
 
 def now_str():
@@ -156,8 +85,7 @@ def now_str():
 
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.executescript(SCHEMA)
+    print(f"[init] Archivio dati: {store.backend}")
     defaults = [
         ("admin", os.environ.get("ADMIN_EMAIL", "admin@ixgoo.gr"),
          os.environ.get("ADMIN_PASSWORD", "admin123"), "Admin", "IxGoo"),
@@ -165,15 +93,27 @@ def init_db():
          os.environ.get("COURIER_PASSWORD", "courier123"), "Courier", "IxGoo"),
     ]
     for role, email, password, nome, cognome in defaults:
-        exists = db.execute("SELECT 1 FROM users WHERE role = ?", (role,)).fetchone()
-        if not exists:
-            db.execute(
-                "INSERT INTO users (role, nome, cognome, email, password_hash,"
-                " email_confirmed, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
-                (role, nome, cognome, email, generate_password_hash(password), now_str()))
+        if users.find_one(role=role) is None:
+            users.add(new_user(role=role, nome=nome, cognome=cognome, email=email.lower(),
+                               password=password, email_confirmed=True))
             print(f"[init] Creato utente {role}: {email} / {password}  (cambia la password!)")
-    db.commit()
-    db.close()
+
+
+def new_user(role, nome, cognome, email, password, email_confirmed=False, **extra):
+    data = {
+        "role": role, "ragione_sociale": None, "nome": nome, "cognome": cognome,
+        "indirizzo": None, "cap": None, "citta": None, "provincia": None, "telefono": None,
+        "email": email, "password_hash": generate_password_hash(password),
+        "email_confirmed": email_confirmed, "confirm_token": None, "lang": DEFAULT_LANG,
+        "active": True, "created_at": now_str(),
+    }
+    data.update(extra)
+    return data
+
+
+def get_user(uid):
+    # gli ID Firestore sono stringhe: sessioni vecchie (ID numerici SQLite) vengono ignorate
+    return users.get(uid) if uid and isinstance(uid, str) else None
 
 
 # ---------------------------------------------------------------- lingua
@@ -196,9 +136,7 @@ def set_lang(code):
     if code in LANGS:
         session["lang"] = code
         if g.user is not None:
-            db = get_db()
-            db.execute("UPDATE users SET lang = ? WHERE id = ?", (code, g.user["id"]))
-            db.commit()
+            users.update(g.user["id"], {"lang": code})
     nxt = request.args.get("next", "")
     if not (nxt.startswith("/") and not nxt.startswith("//")):
         nxt = url_for("index")
@@ -264,14 +202,6 @@ def qr_png(shipment):
     return buf.getvalue()
 
 
-def new_shipment_code(db):
-    prefix = "IXG-" + datetime.now().strftime("%y%m%d") + "-"
-    while True:
-        code = prefix + secrets.token_hex(2).upper()
-        if not db.execute("SELECT 1 FROM shipments WHERE code = ?", (code,)).fetchone():
-            return code
-
-
 def csrf_token():
     if "csrf" not in session:
         session["csrf"] = secrets.token_urlsafe(32)
@@ -283,9 +213,10 @@ def before():
     g.user = None
     uid = session.get("uid")
     if uid:
-        g.user = get_db().execute(
-            "SELECT * FROM users WHERE id = ? AND active = 1", (uid,)).fetchone()
-        if g.user is None:
+        user = get_user(uid)
+        if user is not None and user.get("active"):
+            g.user = user
+        else:
             session.pop("uid", None)
     if request.method == "POST":
         if not secrets.compare_digest(request.form.get("_csrf", ""), session.get("csrf", "")):
@@ -338,16 +269,12 @@ def home_for(user):
 
 
 def get_shipment_or_404(sid):
-    s = get_db().execute("SELECT * FROM shipments WHERE id = ?", (sid,)).fetchone()
+    s = shipments.get(sid)
     if s is None:
         abort(404)
     if not is_staff() and s["user_id"] != g.user["id"]:
         abort(404)
     return s
-
-
-def get_user(uid):
-    return get_db().execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
 
 
 def clean(form, keys):
@@ -358,6 +285,14 @@ def require(data, keys, errors):
     for key in keys:
         if not data.get(key):
             errors[key] = t("err_required")
+
+
+def by_pickup(rows):
+    return sorted(rows, key=lambda s: (s["pickup_date"], s["pickup_time"]))
+
+
+def newest_first(rows):
+    return sorted(rows, key=lambda s: s["created_at"], reverse=True)
 
 
 # ---------------------------------------------------------------- pubbliche
@@ -384,6 +319,15 @@ def validate_profile(data, errors):
         errors["cap"] = t("err_zip")
 
 
+def profile_fields(data):
+    return {
+        "ragione_sociale": data["ragione_sociale"] or None, "nome": data["nome"],
+        "cognome": data["cognome"], "indirizzo": data["indirizzo"], "cap": data["cap"],
+        "citta": data["citta"], "provincia": data["provincia"] or None,
+        "telefono": data["telefono"],
+    }
+
+
 @app.route("/registrati", methods=["GET", "POST"])
 def register():
     if g.user:
@@ -400,22 +344,15 @@ def register():
             errors["password2"] = t("err_password_match")
         if not request.form.get("privacy"):
             errors["privacy"] = t("err_privacy")
-        db = get_db()
-        if not errors.get("email") and db.execute(
-                "SELECT 1 FROM users WHERE email = ?", (data["email"],)).fetchone():
+        if not errors.get("email") and users.find_one(email=data["email"]):
             errors["email"] = t("err_email_taken")
         if not errors:
             token = secrets.token_urlsafe(32)
             lang = current_lang()
-            db.execute(
-                "INSERT INTO users (role, ragione_sociale, nome, cognome, indirizzo, cap,"
-                " citta, provincia, telefono, email, password_hash, confirm_token, lang,"
-                " created_at) VALUES ('cliente', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (data["ragione_sociale"] or None, data["nome"], data["cognome"],
-                 data["indirizzo"], data["cap"], data["citta"], data["provincia"] or None,
-                 data["telefono"], data["email"], generate_password_hash(password),
-                 token, lang, now_str()))
-            db.commit()
+            users.add(new_user("cliente", data["nome"], data["cognome"], data["email"], password,
+                               confirm_token=token, lang=lang, **{
+                                   k: v for k, v in profile_fields(data).items()
+                                   if k not in ("nome", "cognome")}))
             send_mail(data["email"], lang, "mail_confirm_subject", "email/confirm.html",
                       nome=data["nome"], link=ext_url("confirm_email", token=token))
             return render_template("check_email.html", email=data["email"])
@@ -424,14 +361,11 @@ def register():
 
 @app.route("/conferma/<token>")
 def confirm_email(token):
-    db = get_db()
-    user = db.execute("SELECT * FROM users WHERE confirm_token = ?", (token,)).fetchone()
+    user = users.find_one(confirm_token=token)
     if user is None:
         flash(t("flash_confirm_invalid"), "error")
         return redirect(url_for("login"))
-    db.execute("UPDATE users SET email_confirmed = 1, confirm_token = NULL WHERE id = ?",
-               (user["id"],))
-    db.commit()
+    users.update(user["id"], {"email_confirmed": True, "confirm_token": None})
     flash(t("flash_confirm_ok"), "success")
     return redirect(url_for("login"))
 
@@ -440,13 +374,10 @@ def confirm_email(token):
 def resend_confirmation():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        db = get_db()
-        user = db.execute("SELECT * FROM users WHERE email = ? AND email_confirmed = 0",
-                          (email,)).fetchone()
-        if user:
+        user = users.find_one(email=email)
+        if user and not user["email_confirmed"]:
             token = secrets.token_urlsafe(32)
-            db.execute("UPDATE users SET confirm_token = ? WHERE id = ?", (token, user["id"]))
-            db.commit()
+            users.update(user["id"], {"confirm_token": token})
             send_mail(email, user["lang"], "mail_confirm_subject", "email/confirm.html",
                       nome=user["nome"], link=ext_url("confirm_email", token=token))
         # risposta identica in ogni caso, per non rivelare quali email sono registrate
@@ -461,8 +392,9 @@ def login():
     email = ""
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
-        user = get_db().execute("SELECT * FROM users WHERE email = ? AND active = 1",
-                                (email,)).fetchone()
+        user = users.find_one(email=email)
+        if user is not None and not user.get("active"):
+            user = None
         if user is None or not check_password_hash(user["password_hash"],
                                                    request.form.get("password", "")):
             flash(t("flash_login_bad"), "error")
@@ -477,9 +409,7 @@ def login():
                 # la lingua scelta prima del login vince su quella salvata
                 session["lang"] = lang
                 if lang != user["lang"]:
-                    db = get_db()
-                    db.execute("UPDATE users SET lang = ? WHERE id = ?", (lang, user["id"]))
-                    db.commit()
+                    users.update(user["id"], {"lang": lang})
             nxt = request.args.get("next", "")
             if nxt.startswith("/") and not nxt.startswith("//"):
                 return redirect(nxt)
@@ -502,16 +432,14 @@ def profile():
     errors = {}
     data = dict(g.user)
     if request.method == "POST":
-        db = get_db()
         if request.form.get("action") == "password":
             if not check_password_hash(g.user["password_hash"], request.form.get("old", "")):
                 errors["old"] = t("err_old_password")
             elif len(request.form.get("new", "")) < 8:
                 errors["new"] = t("err_password_len")
             else:
-                db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
-                           (generate_password_hash(request.form["new"]), g.user["id"]))
-                db.commit()
+                users.update(g.user["id"],
+                             {"password_hash": generate_password_hash(request.form["new"])})
                 flash(t("flash_password_ok"), "success")
                 return redirect(url_for("profile"))
         elif g.user["role"] == "cliente":
@@ -519,13 +447,7 @@ def profile():
             data["email"] = g.user["email"]  # l'email non si cambia da qui
             validate_profile(data, errors)
             if not errors:
-                db.execute(
-                    "UPDATE users SET ragione_sociale=?, nome=?, cognome=?, indirizzo=?,"
-                    " cap=?, citta=?, provincia=?, telefono=? WHERE id=?",
-                    (data["ragione_sociale"] or None, data["nome"], data["cognome"],
-                     data["indirizzo"], data["cap"], data["citta"], data["provincia"] or None,
-                     data["telefono"], g.user["id"]))
-                db.commit()
+                users.update(g.user["id"], profile_fields(data))
                 flash(t("flash_profile_ok"), "success")
                 return redirect(url_for("profile"))
     return render_template("profile.html", f=data, errors=errors)
@@ -536,8 +458,7 @@ def profile():
 @app.route("/area-cliente")
 @login_required("cliente")
 def client_dashboard():
-    rows = get_db().execute(
-        "SELECT * FROM shipments WHERE user_id = ? ORDER BY id DESC", (g.user["id"],)).fetchall()
+    rows = newest_first(shipments.find(user_id=g.user["id"]))
     return render_template("client_dashboard.html", shipments=rows)
 
 
@@ -552,6 +473,15 @@ SHIP_REQUIRED = [
     "pickup_time", "pickup_indirizzo", "pickup_cap", "pickup_citta", "dest_nome",
     "dest_indirizzo", "dest_cap", "dest_citta", "dest_ref_nome", "dest_ref_telefono", "tipo",
 ]
+
+
+def create_shipment(data):
+    """Salva la spedizione usando il codice IXG-... come ID del documento."""
+    prefix = "IXG-" + datetime.now().strftime("%y%m%d") + "-"
+    while True:
+        code = prefix + secrets.token_hex(2).upper()
+        if shipments.add(dict(data, code=code), doc_id=code):
+            return code
 
 
 @app.route("/spedizioni/nuova", methods=["GET", "POST"])
@@ -588,26 +518,21 @@ def new_shipment():
             except ValueError:
                 errors["pickup_date"] = t("err_datetime")
         if not errors:
-            db = get_db()
-            code = new_shipment_code(db)
             values = {k: (data[k] or None) for k in SHIP_FIELDS}
-            values["colli"] = colli
-            cols = ", ".join(SHIP_FIELDS)
-            marks = ", ".join("?" for _ in SHIP_FIELDS)
-            cur = db.execute(
-                f"INSERT INTO shipments (code, qr_token, user_id, created_at, {cols})"
-                f" VALUES (?, ?, ?, ?, {marks})",
-                [code, secrets.token_urlsafe(16), u["id"], now_str()]
-                + [values[k] for k in SHIP_FIELDS])
-            db.commit()
-            s = db.execute("SELECT * FROM shipments WHERE id = ?", (cur.lastrowid,)).fetchone()
-            for admin in db.execute(
-                    "SELECT email, lang FROM users WHERE role = 'admin' AND active = 1"):
+            values.update({
+                "colli": colli, "qr_token": secrets.token_urlsafe(16), "user_id": u["id"],
+                "status": "in_attesa", "created_at": now_str(), "confirmed_at": None,
+                "confirmed_by": None, "delivered_at": None, "delivered_by": None,
+                "cancelled_at": None,
+            })
+            code = create_shipment(values)
+            s = shipments.get(code)
+            for admin in users.find(role="admin", active=True):
                 send_mail(admin["email"], admin["lang"], "mail_admin_new_subject",
                           "email/admin_new.html", s=s, subject_args={"code": code},
-                          link=ext_url("shipment_detail", sid=s["id"]))
+                          link=ext_url("shipment_detail", sid=code))
             flash(t("flash_shipment_sent", code=code), "success")
-            return redirect(url_for("shipment_detail", sid=s["id"]))
+            return redirect(url_for("shipment_detail", sid=code))
     else:
         data = {
             "mitt_ragione_sociale": u["ragione_sociale"] or "", "mitt_nome": u["nome"],
@@ -621,17 +546,14 @@ def new_shipment():
                            today=date.today().isoformat())
 
 
-@app.route("/spedizioni/<int:sid>/annulla-richiesta", methods=["POST"])
+@app.route("/spedizioni/<sid>/annulla-richiesta", methods=["POST"])
 @login_required("cliente")
 def client_cancel(sid):
     s = get_shipment_or_404(sid)
     if s["status"] != "in_attesa":
         flash(t("flash_cancel_only_pending"), "error")
     else:
-        db = get_db()
-        db.execute("UPDATE shipments SET status = 'annullata', cancelled_at = ? WHERE id = ?",
-                   (now_str(), sid))
-        db.commit()
+        shipments.update(sid, {"status": "annullata", "cancelled_at": now_str()})
         flash(t("flash_cancelled", code=s["code"]), "success")
     return redirect(url_for("shipment_detail", sid=sid))
 
@@ -639,11 +561,11 @@ def client_cancel(sid):
 # ---------------------------------------------------------------- spedizione (tutti)
 
 def full_name(uid):
-    u = get_user(uid) if uid else None
+    u = get_user(uid)
     return f"{u['nome']} {u['cognome']}" if u else None
 
 
-@app.route("/spedizioni/<int:sid>")
+@app.route("/spedizioni/<sid>")
 @login_required()
 def shipment_detail(sid):
     s = get_shipment_or_404(sid)
@@ -654,7 +576,7 @@ def shipment_detail(sid):
                            now_date=now.strftime("%Y-%m-%d"), now_time=now.strftime("%H:%M"))
 
 
-@app.route("/spedizioni/<int:sid>/etichetta")
+@app.route("/spedizioni/<sid>/etichetta")
 @login_required()
 def shipment_label(sid):
     s = get_shipment_or_404(sid)
@@ -665,7 +587,7 @@ def shipment_label(sid):
     return render_template("label.html", s=s, qr_svg=qr_svg)
 
 
-@app.route("/spedizioni/<int:sid>/qr.png")
+@app.route("/spedizioni/<sid>/qr.png")
 @login_required()
 def shipment_qr_png(sid):
     s = get_shipment_or_404(sid)
@@ -678,7 +600,7 @@ def shipment_qr_png(sid):
 @app.route("/s/<token>")
 def scan(token):
     """Pagina aperta scansionando il QR code sul pacco."""
-    s = get_db().execute("SELECT * FROM shipments WHERE qr_token = ?", (token,)).fetchone()
+    s = shipments.find_one(qr_token=token)
     if s is None:
         abort(404)
     if is_staff() or (g.user and g.user["id"] == s["user_id"]):
@@ -686,7 +608,7 @@ def scan(token):
     return render_template("scan_public.html", s=s)
 
 
-@app.route("/spedizioni/<int:sid>/consegna", methods=["POST"])
+@app.route("/spedizioni/<sid>/consegna", methods=["POST"])
 @login_required("admin", "corriere")
 def mark_delivered(sid):
     s = get_shipment_or_404(sid)
@@ -702,11 +624,10 @@ def mark_delivered(sid):
     if (when - datetime.now()).total_seconds() > 300:
         flash(t("flash_deliver_future"), "error")
         return redirect(url_for("shipment_detail", sid=sid))
-    db = get_db()
-    db.execute("UPDATE shipments SET status = 'consegnata', delivered_at = ?, delivered_by = ?"
-               " WHERE id = ?", (when.strftime("%Y-%m-%d %H:%M:00"), g.user["id"], sid))
-    db.commit()
-    s = db.execute("SELECT * FROM shipments WHERE id = ?", (sid,)).fetchone()
+    shipments.update(sid, {"status": "consegnata",
+                           "delivered_at": when.strftime("%Y-%m-%d %H:%M:00"),
+                           "delivered_by": g.user["id"]})
+    s = shipments.get(sid)
     owner = get_user(s["user_id"])
     send_mail(owner["email"], owner["lang"], "mail_delivered_subject", "email/delivered.html",
               s=s, nome=owner["nome"], subject_args={"code": s["code"]},
@@ -724,41 +645,28 @@ def mark_delivered(sid):
 @login_required("admin")
 def admin_dashboard():
     status = request.args.get("stato", "in_attesa")
-    q = request.args.get("q", "").strip()
-    db = get_db()
-    sql = "SELECT s.* FROM shipments s"
-    where, params = [], []
-    if status in STATUS:
-        where.append("s.status = ?")
-        params.append(status)
+    q = request.args.get("q", "").strip().lower()
+    everything = shipments.all()
+    counts = {st: sum(1 for s in everything if s["status"] == st) for st in STATUS}
+    rows = [s for s in everything if status not in STATUS or s["status"] == status]
     if q:
-        like = f"%{q}%"
-        where.append("(s.code LIKE ? OR s.mitt_ragione_sociale LIKE ? OR s.mitt_cognome LIKE ?"
-                     " OR s.dest_nome LIKE ? OR s.dest_citta LIKE ?)")
-        params += [like] * 5
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY s.pickup_date, s.pickup_time" if status in ("in_attesa", "confermata") \
-        else " ORDER BY s.id DESC"
-    rows = db.execute(sql, params).fetchall()
-    counts = {r["status"]: r["n"] for r in db.execute(
-        "SELECT status, COUNT(*) AS n FROM shipments GROUP BY status")}
-    return render_template("admin/dashboard.html", shipments=rows, status=status, q=q,
-                           counts=counts)
+        fields = ("code", "mitt_ragione_sociale", "mitt_cognome", "dest_nome", "dest_citta")
+        rows = [s for s in rows if any(q in (s.get(f) or "").lower() for f in fields)]
+    rows = by_pickup(rows) if status in ("in_attesa", "confermata") else newest_first(rows)
+    return render_template("admin/dashboard.html", shipments=rows, status=status,
+                           q=request.args.get("q", ""), counts=counts)
 
 
-@app.route("/admin/spedizioni/<int:sid>/conferma", methods=["POST"])
+@app.route("/admin/spedizioni/<sid>/conferma", methods=["POST"])
 @login_required("admin")
 def admin_confirm(sid):
     s = get_shipment_or_404(sid)
     if s["status"] != "in_attesa":
         flash(t("flash_not_pending"), "error")
         return redirect(url_for("shipment_detail", sid=sid))
-    db = get_db()
-    db.execute("UPDATE shipments SET status = 'confermata', confirmed_at = ?, confirmed_by = ?"
-               " WHERE id = ?", (now_str(), g.user["id"], sid))
-    db.commit()
-    s = db.execute("SELECT * FROM shipments WHERE id = ?", (sid,)).fetchone()
+    shipments.update(sid, {"status": "confermata", "confirmed_at": now_str(),
+                           "confirmed_by": g.user["id"]})
+    s = shipments.get(sid)
     owner = get_user(s["user_id"])
     send_mail(owner["email"], owner["lang"], "mail_confirmed_subject", "email/confirmed.html",
               nome=owner["nome"], s=s, subject_args={"code": s["code"]},
@@ -768,17 +676,14 @@ def admin_confirm(sid):
     return redirect(url_for("shipment_detail", sid=sid))
 
 
-@app.route("/admin/spedizioni/<int:sid>/annulla", methods=["POST"])
+@app.route("/admin/spedizioni/<sid>/annulla", methods=["POST"])
 @login_required("admin")
 def admin_cancel(sid):
     s = get_shipment_or_404(sid)
     if s["status"] not in ("in_attesa", "confermata"):
         flash(t("flash_cannot_cancel"), "error")
         return redirect(url_for("shipment_detail", sid=sid))
-    db = get_db()
-    db.execute("UPDATE shipments SET status = 'annullata', cancelled_at = ? WHERE id = ?",
-               (now_str(), sid))
-    db.commit()
+    shipments.update(sid, {"status": "annullata", "cancelled_at": now_str()})
     owner = get_user(s["user_id"])
     send_mail(owner["email"], owner["lang"], "mail_cancelled_subject", "email/cancelled.html",
               nome=owner["nome"], s=s, subject_args={"code": s["code"]},
@@ -790,15 +695,14 @@ def admin_cancel(sid):
 @app.route("/admin/utenti", methods=["GET", "POST"])
 @login_required("admin")
 def admin_users():
-    db = get_db()
     errors, f = {}, {}
     if request.method == "POST":
         action = request.form.get("action")
         if action == "toggle":
-            uid = int(request.form.get("uid", 0))
-            if uid != g.user["id"]:
-                db.execute("UPDATE users SET active = 1 - active WHERE id = ?", (uid,))
-                db.commit()
+            uid = request.form.get("uid", "")
+            target = get_user(uid)
+            if target and uid != g.user["id"]:
+                users.update(uid, {"active": not target.get("active")})
             return redirect(url_for("admin_users"))
         f = clean(request.form, ["role", "nome", "cognome", "email", "telefono"])
         f["email"] = f["email"].lower()
@@ -807,25 +711,26 @@ def admin_users():
             errors["role"] = t("err_required")
         if f["email"] and not EMAIL_RE.match(f["email"]):
             errors["email"] = t("err_email")
-        elif db.execute("SELECT 1 FROM users WHERE email = ?", (f["email"],)).fetchone():
+        elif users.find_one(email=f["email"]):
             errors["email"] = t("err_email_taken")
         password = request.form.get("password", "")
         if len(password) < 8:
             errors["password"] = t("err_password_len")
         if not errors:
-            db.execute(
-                "INSERT INTO users (role, nome, cognome, email, telefono, password_hash,"
-                " email_confirmed, lang, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                (f["role"], f["nome"], f["cognome"], f["email"], f["telefono"] or None,
-                 generate_password_hash(password), current_lang(), now_str()))
-            db.commit()
+            users.add(new_user(f["role"], f["nome"], f["cognome"], f["email"], password,
+                               email_confirmed=True, telefono=f["telefono"] or None,
+                               lang=current_lang()))
             flash(t("flash_user_created", name=f"{f['nome']} {f['cognome']}"), "success")
             return redirect(url_for("admin_users"))
-    staff = db.execute("SELECT * FROM users WHERE role IN ('admin', 'corriere')"
-                       " ORDER BY role, cognome").fetchall()
-    clients = db.execute(
-        "SELECT u.*, (SELECT COUNT(*) FROM shipments s WHERE s.user_id = u.id) AS n"
-        " FROM users u WHERE role = 'cliente' ORDER BY u.id DESC").fetchall()
+    everyone = users.all()
+    staff = sorted((u for u in everyone if u["role"] in ("admin", "corriere")),
+                   key=lambda u: (u["role"], u["cognome"]))
+    per_client = {}
+    for s in shipments.all():
+        per_client[s["user_id"]] = per_client.get(s["user_id"], 0) + 1
+    clients = sorted((dict(u, n=per_client.get(u["id"], 0))
+                      for u in everyone if u["role"] == "cliente"),
+                     key=lambda u: u["created_at"], reverse=True)
     return render_template("admin/users.html", staff=staff, clients=clients, f=f, errors=errors)
 
 
@@ -834,12 +739,11 @@ def admin_users():
 @app.route("/corriere")
 @login_required("corriere", "admin")
 def courier_dashboard():
-    db = get_db()
-    todo = db.execute("SELECT * FROM shipments WHERE status = 'confermata'"
-                      " ORDER BY pickup_date, pickup_time").fetchall()
-    done = db.execute("SELECT * FROM shipments WHERE status = 'consegnata'"
-                      " AND date(delivered_at) = date('now', 'localtime')"
-                      " ORDER BY delivered_at DESC").fetchall()
+    todo = by_pickup(shipments.find(status="confermata"))
+    today = date.today().isoformat()
+    done = sorted((s for s in shipments.find(status="consegnata")
+                   if (s.get("delivered_at") or "").startswith(today)),
+                  key=lambda s: s["delivered_at"], reverse=True)
     return render_template("courier_dashboard.html", todo=todo, done=done)
 
 

@@ -12,3 +12,7 @@ data/
 # file locali
 .claude/
 .DS_Store
+
+# chiave del service account Firebase: MAI su GitHub
+firebase-key.json
+*-firebase-adminsdk-*.json
