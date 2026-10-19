@@ -3,8 +3,14 @@
     "site": "ixgoo",
     "public": "public",
     "ignore": ["firebase.json", "**/.*"],
-    "rewrites": [
-      { "source": "**", "run": { "serviceId": "ixgoo", "region": "europe-west1" } }
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
     ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
   }
 }

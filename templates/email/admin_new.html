@@ -1,7 +1,0 @@
-{% extends 'email/_layout.html' %}
-{% block body %}
-<p>{{ t('mail_admin_new_text') }}</p>
-{% include 'email/_summary.html' %}
-<p>{{ t('sender') }}: {{ s.mitt_ragione_sociale or '' }} {{ s.mitt_nome }} {{ s.mitt_cognome }} · {{ s.mitt_telefono }}</p>
-{% with button=t('mail_open_order') %}{% include 'email/_button.html' %}{% endwith %}
-{% endblock %}

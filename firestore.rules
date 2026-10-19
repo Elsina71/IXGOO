@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// Regole di sicurezza IxGoo: sono l'unica protezione dei dati, perché l'app gira nel browser.
+//  - users/{uid}: profilo; il ruolo (cliente/corriere/admin) lo cambia solo un admin
+//  - shipments/{codice}: il cliente crea e vede le sue; admin conferma/annulla;
+//    admin e corriere registrano la consegna
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function profilePath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function profile() { return get(profilePath()).data; }
+    function hasRole(roles) {
+      return verified() && exists(profilePath())
+        && profile().get('active', true) == true && profile().role in roles;
+    }
+    function isAdmin() { return hasRole(['admin']); }
+    function isStaff() { return hasRole(['admin', 'corriere']); }
+    function onlyChanged(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    function nonEmpty(v) { return v is string && v.size() > 0 && v.size() <= 300; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+
+      // registrazione: si nasce "cliente" e attivi; gli indirizzi qui sotto nascono "admin"
+      // (i poteri da admin valgono solo dopo la conferma dell'email: vedi hasRole)
+      allow create: if signedIn() && request.auth.uid == uid
+        && (request.resource.data.role == 'cliente'
+            || (request.resource.data.role == 'admin'
+                && request.auth.token.email in ['ixgoo@outlook.gr', 'pierpaolomurgioni@gmail.com']))
+        && request.resource.data.active == true
+        && request.resource.data.email == request.auth.token.email
+        && nonEmpty(request.resource.data.nome)
+        && nonEmpty(request.resource.data.cognome);
+
+      allow update: if signedIn() && (
+        // il proprio profilo, senza toccare ruolo, stato o email
+        (request.auth.uid == uid && onlyChanged(['ragione_sociale', 'nome', 'cognome',
+            'indirizzo', 'cap', 'citta', 'provincia', 'telefono', 'lang']))
+        // un admin cambia ruolo o attiva/disattiva gli altri
+        || (isAdmin() && request.auth.uid != uid && onlyChanged(['role', 'active'])
+            && request.resource.data.role in ['cliente', 'corriere', 'admin']
+            && request.resource.data.active is bool)
+      );
+
+      allow delete: if false;
+    }
+
+    match /shipments/{code} {
+      allow read: if isStaff()
+        || (verified() && resource.data.user_id == request.auth.uid);
+
+      // nuova prenotazione: solo clienti con email verificata, sempre "in attesa"
+      allow create: if hasRole(['cliente'])
+        && request.resource.data.user_id == request.auth.uid
+        && request.resource.data.code == code
+        && code.matches('IXG-[0-9]{6}-[0-9A-F]{6}')
+        && request.resource.data.status == 'in_attesa'
+        && request.resource.data.confirmed_by == null
+        && request.resource.data.delivered_by == null
+        && request.resource.data.delivered_at == null
+        && request.resource.data.tipo in ['busta', 'pacco']
+        && request.resource.data.colli is int
+        && request.resource.data.colli >= 1 && request.resource.data.colli <= 99
+        && nonEmpty(request.resource.data.dest_nome)
+        && nonEmpty(request.resource.data.pickup_date)
+        && nonEmpty(request.resource.data.pickup_time);
+
+      allow update: if
+        // il cliente annulla una sua richiesta non ancora confermata
+        (verified() && resource.data.user_id == request.auth.uid
+          && resource.data.status == 'in_attesa'
+          && request.resource.data.status == 'annullata'
+          && onlyChanged(['status', 'cancelled_at']))
+        // l'admin conferma il ricevimento
+        || (isAdmin() && resource.data.status == 'in_attesa'
+          && request.resource.data.status == 'confermata'
+          && request.resource.data.confirmed_by == request.auth.uid
+          && onlyChanged(['status', 'confirmed_at', 'confirmed_by']))
+        // l'admin annulla
+        || (isAdmin() && resource.data.status in ['in_attesa', 'confermata']
+          && request.resource.data.status == 'annullata'
+          && onlyChanged(['status', 'cancelled_at', 'cancel_reason']))
+        // admin o corriere registrano la consegna
+        || (isStaff() && resource.data.status == 'confermata'
+          && request.resource.data.status == 'consegnata'
+          && request.resource.data.delivered_by == request.auth.uid
+          && onlyChanged(['status', 'delivered_at', 'delivered_by']));
+
+      allow delete: if false;
+    }
+  }
+}

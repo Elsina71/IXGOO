@@ -1,4 +1,0 @@
-flask>=3.0
-segno>=1.6
-google-cloud-firestore>=2.16
-gunicorn>=22.0

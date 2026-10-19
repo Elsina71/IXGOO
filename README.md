@@ -1,62 +1,44 @@
 # IxGoo Courier & Logistics — prenotazione spedizioni
 
-Web app per prenotare ritiri e consegne. Lingua principale greco; disponibile anche in
-inglese, italiano, francese, ebraico (layout da destra a sinistra), spagnolo, tedesco, russo e cinese.
+**Online:** https://ixgoo.web.app
 
-## Avvio
-
-    ./run.sh
-
-Poi apri http://localhost:5050. La prima volta crea l'ambiente Python e installa Flask e segno (QR).
-
-Account creati al primo avvio (cambia subito le password da "Profilo"):
-
-| Ruolo     | Email             | Password    |
-|-----------|-------------------|-------------|
-| Admin     | admin@ixgoo.gr    | admin123    |
-| Corriere  | courier@ixgoo.gr  | courier123  |
-
-Dall'area **Utenti** l'admin crea altri corrieri o amministratori.
+App statica, gratuita (piano Firebase Spark): Firebase Authentication + Firestore + Firebase Hosting.
+Lingua principale greco; anche inglese, italiano, francese, ebraico (da destra a sinistra),
+spagnolo, tedesco, russo e cinese.
 
 ## Flusso
 
-1. Il cliente si registra (ragione sociale facoltativa, referente, indirizzo, telefono, email) e conferma l'email.
-2. Prenota una spedizione: mittente, data/ora e luogo di ritiro, destinatario con referente e telefono, busta o pacco.
-3. L'admin riceve un'email e conferma il ricevimento dell'ordine.
-4. Il cliente riceve l'email con il QR code allegato e il link all'etichetta da stampare.
-5. Il corriere scansiona il QR (apre la scheda della spedizione) e preme
-   "Consegna effettuata il giorno … alle ore …". Il cliente riceve la notifica.
+1. Il cliente si registra (ragione sociale facoltativa, referente, indirizzo, telefono, email) e
+   conferma l'email con il link che Firebase gli invia.
+2. Prenota: mittente, data/ora e luogo di ritiro, destinatario con referente e telefono, busta o pacco.
+3. L'admin vede l'ordine in "Ordini" e preme **Conferma ricevimento ordine**.
+4. Nell'area del cliente compare subito il QR code con l'etichetta da stampare e attaccare al pacco.
+5. Il corriere scansiona il QR (si apre la spedizione, dopo il login) e preme
+   **"Consegna effettuata il giorno … alle ore …"**. Il cliente vede la consegna nella sua area.
 
-Ogni utente riceve le email nella lingua che ha scelto.
+## Ruoli
 
-## Database: Firestore (progetto Firebase `ixgoo-9f901`)
+- `ixgoo@outlook.gr` e `pierpaolomurgioni@gmail.com` diventano **admin** quando si registrano
+  (lista in `public/js/app.js` e `firestore.rules`).
+- Corrieri e altri admin si registrano come clienti; poi un admin cambia il loro ruolo da **Utenti**.
+- In alternativa, da questa cartella: `.venv/bin/python tools/admin.py ruolo <email> corriere`
 
-L'app salva clienti, utenti e spedizioni su Firestore:
+## Pubblicare una modifica
 
-- `users` — un documento per account (clienti, admin, corrieri)
-- `shipments` — un documento per spedizione; l'ID è il codice `IXG-…`
-
-Per collegarla serve la chiave del service account: Console Firebase → ⚙ Impostazioni
-progetto → Account di servizio → **Genera nuova chiave privata**. Salva il file scaricato in
-questa cartella con il nome `firebase-key.json` (è escluso da Git: non caricarlo mai su GitHub).
-
-Senza chiave l'app parte lo stesso ma tiene i dati **solo in memoria** (si perdono al riavvio):
-utile solo per provare. All'avvio il terminale indica quale archivio sta usando.
-
-## Configurazione (file `.env`, vedi `.env.example`)
-
-- `BASE_URL` — indirizzo pubblico dell'app. **Necessario in produzione**: è l'URL dentro il QR
-  code e nei link delle email (con `localhost` il telefono del corriere non lo raggiunge).
-- `SMTP_*` — server di posta. Senza `SMTP_HOST` le email non vengono inviate ma salvate in
-  `data/outbox/` e si leggono su `/dev/posta` (utile per provare).
+Doppio clic su **`pubblica.command`** (oppure `.venv/bin/python tools/deploy.py`).
+Pubblica regole di sicurezza e sito usando `firebase-key.json` (chiave del service account,
+**mai su GitHub**: è nel `.gitignore`). Nel browser premi ⌘⇧R per vedere subito la nuova versione.
 
 ## File
 
-- `app.py` — tutta la logica (rotte, email, QR)
-- `store.py` — accesso ai dati (Firestore, oppure memoria per le prove)
-- `i18n.py` — tutte le traduzioni (una riga per lingua per ogni testo)
-- `templates/` — pagine ed email; `static/` — stile e logo
+- `public/` — il sito: `index.html`, `style.css`, `js/app.js` (tutta l'app), `js/i18n.js`
+  (traduzioni), `js/firebase-config.js` (configurazione web, pubblica per natura)
+- `firestore.rules` — regole di sicurezza: chi può leggere e modificare cosa
+- `tools/deploy.py` — pubblicazione; `tools/admin.py` — cambio ruoli
 
-## Messa online
+## Dati (Firestore)
 
-Vedi [DEPLOY.md](DEPLOY.md): Cloud Run + Firebase Hosting su https://ixgoo.web.app.
+- `users/{uid}` — profilo e ruolo di ogni account
+- `shipments/{codice}` — spedizioni; l'ID è il codice `IXG-AAMMGG-XXXXXX`
+
+La versione precedente con server Python (Cloud Run) è nel ramo `versione-server`.
