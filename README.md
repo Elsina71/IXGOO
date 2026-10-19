@@ -18,7 +18,7 @@ spagnolo, tedesco, russo e cinese.
 
 ## Ruoli
 
-- `ixgoo@outlook.gr` e `pierpaolomurgioni@gmail.com` diventano **admin** quando si registrano
+- `ixgoo@outlook.com.gr` e `pierpaolomurgioni@gmail.com` diventano **admin** quando si registrano
   (lista in `public/js/app.js` e `firestore.rules`).
 - Corrieri e altri admin si registrano come clienti; poi un admin cambia il loro ruolo da **Utenti**.
 - In alternativa, da questa cartella: `.venv/bin/python tools/admin.py ruolo <email> corriere`

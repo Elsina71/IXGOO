@@ -30,7 +30,7 @@ service cloud.firestore {
       allow create: if signedIn() && request.auth.uid == uid
         && (request.resource.data.role == 'cliente'
             || (request.resource.data.role == 'admin'
-                && request.auth.token.email in ['ixgoo@outlook.gr', 'pierpaolomurgioni@gmail.com']))
+                && request.auth.token.email in ['ixgoo@outlook.com.gr', 'pierpaolomurgioni@gmail.com']))
         && request.resource.data.active == true
         && request.resource.data.email == request.auth.token.email
         && nonEmpty(request.resource.data.nome)

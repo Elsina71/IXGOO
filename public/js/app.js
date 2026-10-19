@@ -19,7 +19,7 @@ const db = getFirestore(fb);
 
 const STATUS = ["in_attesa", "confermata", "consegnata", "annullata"];
 // questi indirizzi diventano admin alla registrazione (stessa lista in firestore.rules)
-const ADMIN_EMAILS = ["ixgoo@outlook.gr", "pierpaolomurgioni@gmail.com"];
+const ADMIN_EMAILS = ["ixgoo@outlook.com.gr", "pierpaolomurgioni@gmail.com"];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const PHONE_RE = /^\+?[0-9 ./()-]{6,20}$/;
 const ZIP_RE = /^[A-Za-z0-9 -]{3,10}$/;
