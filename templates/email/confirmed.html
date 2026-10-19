@@ -1,0 +1,8 @@
+{% extends 'email/_layout.html' %}
+{% block body %}
+<p>{{ t('mail_hello', name=nome) }}</p>
+<p>{{ t('mail_confirmed_text') }}</p>
+{% include 'email/_summary.html' %}
+{% with button=t('print_label') %}{% include 'email/_button.html' %}{% endwith %}
+<p style="color:#6b6760;font-size:13px">{{ t('mail_confirmed_attachment') }}</p>
+{% endblock %}

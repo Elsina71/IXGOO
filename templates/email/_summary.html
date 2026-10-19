@@ -1,0 +1,6 @@
+<table cellpadding="6" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px;background:#faf8f3;border-radius:8px">
+  <tr><td style="color:#6b6760">{{ t('code') }}</td><td><strong>{{ s.code }}</strong></td></tr>
+  <tr><td style="color:#6b6760">{{ t('pickup') }}</td><td>{{ s.pickup_date|it_date }} {{ s.pickup_time }} — {{ s.pickup_indirizzo }}, {{ s.pickup_cap }} {{ s.pickup_citta }}</td></tr>
+  <tr><td style="color:#6b6760">{{ t('destination') }}</td><td>{{ s.dest_nome }} — {{ s.dest_indirizzo }}, {{ s.dest_cap }} {{ s.dest_citta }}</td></tr>
+  <tr><td style="color:#6b6760">{{ t('type') }}</td><td>{{ t('type_' ~ s.tipo) }} · {{ t('parcels') }}: {{ s.colli }}</td></tr>
+</table>

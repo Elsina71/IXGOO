@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import badge with context %}
+{% block title %}{{ t('nav_orders') }}{% endblock %}
+{% block content %}
+<div class="page-head"><h1>{{ t('nav_orders') }}</h1></div>
+<div class="tabs">
+  {% for st in STATUS %}
+    <a href="{{ url_for('admin_dashboard', stato=st) }}" class="{{ 'active' if status == st }}">{{ t('status_' ~ st) }}<span class="count">{{ counts.get(st, 0) }}</span></a>
+  {% endfor %}
+  <a href="{{ url_for('admin_dashboard', stato='tutte') }}" class="{{ 'active' if status not in STATUS }}">{{ t('all') }}</a>
+</div>
+<form class="search" method="get">
+  <input type="hidden" name="stato" value="{{ status }}">
+  <input name="q" value="{{ q }}" placeholder="{{ t('search_placeholder') }}">
+  <button class="btn btn-ghost" type="submit">{{ t('search') }}</button>
+</form>
+<div class="card" style="padding:8px 0">
+{% if shipments %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ t('code') }}</th><th>{{ t('pickup') }}</th><th>{{ t('sender') }}</th><th>{{ t('destination') }}</th><th>{{ t('status') }}</th></tr></thead>
+    <tbody>
+    {% for s in shipments %}
+      <tr class="rowlink" onclick="location.href='{{ url_for('shipment_detail', sid=s.id) }}'">
+        <td class="code">{{ s.code }}</td>
+        <td><strong>{{ s.pickup_date|it_date }} {{ s.pickup_time }}</strong><br><span class="muted small">{{ s.pickup_citta }}</span></td>
+        <td>{{ s.mitt_ragione_sociale or (s.mitt_nome ~ ' ' ~ s.mitt_cognome) }}<br><span class="muted small ltr">{{ s.mitt_telefono }}</span></td>
+        <td>{{ s.dest_nome }}<br><span class="muted small">{{ s.dest_citta }}</span></td>
+        <td>{{ badge(s.status) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+{% else %}
+  <div class="empty">{{ t('no_results') }}</div>
+{% endif %}
+</div>
+{% endblock %}

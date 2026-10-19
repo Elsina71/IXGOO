@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import csrf with context %}
+{% block content %}
+<div class="narrow">
+  <h1>{{ t('resend_link') }}</h1>
+  <form method="post" class="card">
+    {{ csrf() }}
+    <div class="field"><label for="email">{{ t('email') }}</label><input id="email" name="email" type="email" required></div>
+    <p></p>
+    <button class="btn btn-primary btn-block" type="submit">{{ t('send') }}</button>
+  </form>
+</div>
+{% endblock %}

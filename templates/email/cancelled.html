@@ -1,0 +1,8 @@
+{% extends 'email/_layout.html' %}
+{% block body %}
+<p>{{ t('mail_hello', name=nome) }}</p>
+<p>{{ t('mail_cancelled_text', code=s.code) }}</p>
+{% if motivo %}<p><strong>{{ t('cancel_reason') }}:</strong> {{ motivo }}</p>{% endif %}
+{% include 'email/_summary.html' %}
+<p>{{ t('mail_cancelled_contact') }}</p>
+{% endblock %}

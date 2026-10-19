@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="{{ lang }}" dir="{{ 'rtl' if rtl else 'ltr' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ t('app_title') }}{% endblock %} · IxGoo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Hebrew:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='logo.jpg') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="{{ url_for('index') }}"><img src="{{ url_for('static', filename='logo-mark.jpg') }}" alt="IxGoo Courier & Logistics"></a>
+    <nav class="nav">
+      {% if g.user %}
+        {% if g.user.role == 'cliente' %}
+          <a href="{{ url_for('client_dashboard') }}" class="{{ 'active' if request.endpoint == 'client_dashboard' }}">{{ t('nav_my_shipments') }}</a>
+          <a href="{{ url_for('new_shipment') }}" class="{{ 'active' if request.endpoint == 'new_shipment' }}">{{ t('nav_new_shipment') }}</a>
+        {% elif g.user.role == 'admin' %}
+          <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint == 'admin_dashboard' }}">{{ t('nav_orders') }}</a>
+          <a href="{{ url_for('courier_dashboard') }}" class="{{ 'active' if request.endpoint == 'courier_dashboard' }}">{{ t('nav_deliveries') }}</a>
+          <a href="{{ url_for('admin_users') }}" class="{{ 'active' if request.endpoint == 'admin_users' }}">{{ t('nav_users') }}</a>
+        {% else %}
+          <a href="{{ url_for('courier_dashboard') }}" class="{{ 'active' if request.endpoint == 'courier_dashboard' }}">{{ t('nav_deliveries') }}</a>
+        {% endif %}
+        <a href="{{ url_for('profile') }}" class="{{ 'active' if request.endpoint == 'profile' }}">{{ t('nav_profile') }}</a>
+        <form method="post" action="{{ url_for('logout') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button class="linklike" type="submit">{{ t('nav_logout') }}</button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('login') }}">{{ t('nav_login') }}</a>
+        <a href="{{ url_for('register') }}">{{ t('nav_register') }}</a>
+      {% endif %}
+      <select class="lang-select" aria-label="{{ t('language') }}"
+              onchange="location.href='{{ url_for('set_lang', code='__L__') }}'.replace('__L__', this.value) + '?next=' + encodeURIComponent(location.pathname + location.search)">
+        {% for code, name in LANGS.items() %}
+          <option value="{{ code }}" {{ 'selected' if code == lang }}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </nav>
+  </div>
+</header>
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}<div class="flash flash-{{ cat }}">{{ msg }}</div>{% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<footer>
+  IxGoo Courier &amp; Logistics · More than deliveries
+  {% if dev_mail %} · <a href="{{ url_for('dev_mailbox') }}">{{ t('dev_mailbox') }}</a>{% endif %}
+</footer>
+</body>
+</html>

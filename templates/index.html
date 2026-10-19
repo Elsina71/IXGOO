@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <img src="{{ url_for('static', filename='logo-wide.jpg') }}" alt="IxGoo Courier & Logistics">
+  <div class="hero-text">
+    <h1>{{ t('hero_title') }}</h1>
+    <p>{{ t('hero_text') }}</p>
+    <div class="actions">
+      <a class="btn btn-gold btn-lg" href="{{ url_for('register') }}">{{ t('nav_register') }}</a>
+      <a class="btn btn-ghost btn-lg" style="color:#fff;border-color:#444" href="{{ url_for('login') }}">{{ t('nav_login') }}</a>
+    </div>
+  </div>
+</section>
+<div class="steps">
+  {% for i in range(1, 5) %}
+  <div class="step"><b>{{ i }}</b><h3>{{ t('step' ~ i ~ '_title') }}</h3><p>{{ t('step' ~ i ~ '_text') }}</p></div>
+  {% endfor %}
+</div>
+{% endblock %}

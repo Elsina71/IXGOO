@@ -1,0 +1,7 @@
+{% extends 'email/_layout.html' %}
+{% block body %}
+<p>{{ t('mail_hello', name=nome) }}</p>
+<p>{{ t('mail_confirm_text') }}</p>
+{% with button=t('mail_confirm_button') %}{% include 'email/_button.html' %}{% endwith %}
+<p style="color:#8a857b;font-size:13px">{{ t('mail_confirm_ignore') }}</p>
+{% endblock %}

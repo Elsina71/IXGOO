@@ -1,0 +1,14 @@
+# ambiente Python
+.venv/
+__pycache__/
+*.pyc
+
+# dati locali: database, email di prova, chiave segreta
+data/
+
+# configurazione con password
+.env
+
+# file locali
+.claude/
+.DS_Store

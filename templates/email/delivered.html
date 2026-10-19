@@ -1,0 +1,8 @@
+{% extends 'email/_layout.html' %}
+{% block body %}
+<p>{{ t('mail_hello', name=nome) }}</p>
+<p><strong>{{ t('banner_delivered', date=s.delivered_at|it_date, time=s.delivered_at|hm) }}</strong></p>
+{% include 'email/_summary.html' %}
+{% with button=t('mail_open_order') %}{% include 'email/_button.html' %}{% endwith %}
+<p>{{ t('mail_thanks') }}</p>
+{% endblock %}
