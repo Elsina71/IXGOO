@@ -141,6 +141,19 @@ function setLang(code) {
   route();
 }
 
+// Se Firestore rifiuta una lettura, il motivo più comune è un token di accesso vecchio
+// (es. appena confermata l'email): lo rinnova una volta e riprova, poi mostra 403.
+let deniedRetried = false;
+function denied() {
+  if (!deniedRetried && auth.currentUser) {
+    deniedRetried = true;
+    auth.currentUser.getIdToken(true).then(() => setTimeout(route, 300)).catch(() => errorView(403));
+  } else {
+    errorView(403);
+  }
+}
+const allowed = () => { deniedRetried = false; };
+
 function errorView(code) {
   render(`<div class="narrow card" style="text-align:center"><h1>${code}</h1>
     <p>${esc(t("error_" + code))}</p><a class="btn btn-primary" href="#/">${esc(t("back_home"))}</a></div>`);
@@ -340,9 +353,9 @@ function viewVerify() {
     await state.user.reload();
     if (auth.currentUser.emailVerified) {
       await auth.currentUser.getIdToken(true); // aggiorna il token: le regole vedono email_verified
-      state.user = auth.currentUser;
-      flash(t("flash_confirm_ok"));
-      go(homeFor());
+      // ricarica la pagina, così anche Firestore riparte con il token nuovo
+      location.hash = homeFor();
+      location.reload();
     } else { flash(t("verify_not_yet"), "error"); viewVerify(); }
   };
   document.getElementById("resend").onclick = async (e) => {
@@ -360,6 +373,7 @@ function viewClient() {
     <div class="card" style="padding:8px 0" id="list"><div class="empty">${esc(t("loading"))}</div></div>`, t("nav_my_shipments"));
   const q = query(collection(db, "shipments"), where("user_id", "==", state.user.uid));
   unsubs.push(onSnapshot(q, (snap) => {
+    allowed();
     const rows = snap.docs.map((d) => d.data()).sort((a, b) => b.created_at.localeCompare(a.created_at));
     const el = document.getElementById("list");
     if (!el) return;
@@ -372,7 +386,7 @@ function viewClient() {
       </tbody></table></div>`
       : `<div class="empty"><p>${esc(t("no_shipments_yet"))}</p><a class="btn btn-primary" href="#/nuova">${esc(t("book_first"))}</a></div>`;
     bindRowLinks(el);
-  }, () => errorView(403)));
+  }, denied));
 }
 
 function bindRowLinks(el) {
@@ -482,6 +496,7 @@ async function personName(uid) {
 function viewDetail(code) {
   render(`<div class="empty">${esc(t("loading"))}</div>`, code);
   unsubs.push(onSnapshot(doc(db, "shipments", code), async (snap) => {
+    allowed();
     if (!snap.exists()) return errorView(404);
     const s = snap.data();
     let owner = null; let confBy = null; let delBy = null;
@@ -646,6 +661,7 @@ function viewAdmin(_, params) {
     go(`#/admin?stato=${encodeURIComponent(status)}&q=${encodeURIComponent(formData(e.target).q)}`);
   };
   unsubs.push(onSnapshot(collection(db, "shipments"), (snap) => {
+    allowed();
     const all = snap.docs.map((d) => d.data());
     const counts = Object.fromEntries(STATUS.map((st) => [st, all.filter((s) => s.status === st).length]));
     document.getElementById("tabs").innerHTML = STATUS.map((st) => `<a href="#/admin?stato=${st}" class="${status === st ? "active" : ""}">${esc(t("status_" + st))}<span class="count">${counts[st]}</span></a>`).join("")
@@ -665,13 +681,14 @@ function viewAdmin(_, params) {
       <td>${esc(s.dest_nome)}<br><span class="muted small">${esc(s.dest_citta)}</span></td><td>${badge(s.status)}</td></tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${esc(t("no_results"))}</div>`;
     bindRowLinks(el);
-  }, () => errorView(403)));
+  }, denied));
 }
 
 function viewUsers() {
   render(`<h1>${esc(t("nav_users"))}</h1><p class="muted">${esc(t("users_hint"))}</p>
     <section class="card"><h2>${esc(t("all_users"))}</h2><div id="list"><div class="empty">${esc(t("loading"))}</div></div></section>`, t("nav_users"));
   unsubs.push(onSnapshot(collection(db, "users"), (snap) => {
+    allowed();
     const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.role === b.role ? (b.created_at || "").localeCompare(a.created_at || "") : ["admin", "corriere", "cliente"].indexOf(a.role) - ["admin", "corriere", "cliente"].indexOf(b.role)));
     const el = document.getElementById("list");
@@ -691,7 +708,7 @@ function viewUsers() {
     el.querySelectorAll(".toggle").forEach((b) => {
       b.onclick = () => updateDoc(doc(db, "users", b.dataset.uid), { active: b.dataset.active !== "true" }).catch(() => { flash(t("err_generic"), "error"); route(); });
     });
-  }, () => errorView(403)));
+  }, denied));
 }
 
 // ------------------------------------------------------------------ corriere
@@ -699,6 +716,7 @@ function viewUsers() {
 function viewCourier() {
   render(`<div class="page-head"><h1>${esc(t("nav_deliveries"))}</h1></div><p class="muted">${esc(t("courier_intro"))}</p><div id="list"><div class="empty">${esc(t("loading"))}</div></div>`, t("nav_deliveries"));
   unsubs.push(onSnapshot(collection(db, "shipments"), (snap) => {
+    allowed();
     const all = snap.docs.map((d) => d.data());
     const todo = all.filter((s) => s.status === "confermata")
       .sort((a, b) => `${a.pickup_date} ${a.pickup_time}`.localeCompare(`${b.pickup_date} ${b.pickup_time}`));
@@ -714,7 +732,7 @@ function viewCourier() {
       <h2>${esc(t("delivered_today"))} (${done.length})</h2><div class="card" style="padding:8px 0">
       ${done.length ? `<table>${done.map((s) => `<tr class="rowlink" data-href="#/spedizione/${esc(s.code)}"><td class="code">${esc(s.code)}</td><td>${esc(s.dest_nome)}</td><td>${hm(s.delivered_at)}</td></tr>`).join("")}</table>` : '<div class="empty">—</div>'}</div>`;
     bindRowLinks(el);
-  }, () => errorView(403)));
+  }, denied));
 }
 
 // ------------------------------------------------------------------ profilo
